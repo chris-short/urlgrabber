@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: write
-  # packages: write
+  packages: write
   # issues: write
 
 jobs:
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: go1.22.1
+          go-version: 'stable'
       # More assembly might be required: Docker logins, GPG, etc.
       # It all depends on your needs.
       - name: Run GoReleaser
