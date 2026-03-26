@@ -1,40 +1,58 @@
-# .github/workflows/release.yml
-name: goreleaser
+---
+name: Release
 
 on:
-  pull_request:
   push:
-    # run only against tags
-    tags:
-      - "*"
+    branches:
+      - main
 
-permissions:
-  contents: write
-  packages: write
-  # issues: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  goreleaser:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      security-events: write
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: 'stable'
-      # More assembly might be required: Docker logins, GPG, etc.
-      # It all depends on your needs.
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1.0.4
         with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
+          repo-checkout: false
+
+      - name: Smoke test
+        run: |
+          echo "https://chrisshort.net" > /tmp/urls.txt
+          go run main.go /tmp/urls.txt
+
+      - name: Generate and push version tag
+        run: |
+          VERSION="v0.$(date +'%Y%m%d').${{ github.run_number }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+      - name: Release
+        uses: goreleaser/goreleaser-action@v7
+        with:
           distribution: goreleaser
-          version: latest
+          version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Your GoReleaser Pro key, if you are using the 'goreleaser-pro' distribution
-          # GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}

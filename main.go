@@ -44,58 +44,66 @@ func isValidURL(url string) bool {
 	return statusCode >= 200 && statusCode < 400
 }
 
+func checkURLs(candidates []string, urlChan chan<- string, workerPool chan struct{}) {
+	var wg sync.WaitGroup
+	for _, u := range candidates {
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			continue
+		}
+		wg.Add(1)
+		workerPool <- struct{}{}
+		go func(u string) {
+			defer wg.Done()
+			defer func() { <-workerPool }()
+			if isValidURL(u) {
+				urlChan <- u
+			}
+		}(u)
+	}
+	wg.Wait()
+}
+
 func extractURLs(filePath string, wg *sync.WaitGroup, urlChan chan<- string, workerPool chan struct{}) {
 	defer wg.Done()
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		fmt.Printf("Error opening file %s: %v\n", filePath, err)
+		fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", filePath, err)
 		return
 	}
 	defer file.Close()
 
 	fileInfo, err := file.Stat()
 	if err != nil {
-		fmt.Printf("Error getting file info for %s: %v\n", filePath, err)
+		fmt.Fprintf(os.Stderr, "Error getting file info for %s: %v\n", filePath, err)
 		return
 	}
 
-	if fileInfo.Size() < int64(maxMemoryFileSize) {
-		workerPool <- struct{}{}
-		// Cache the file in memory if it's small enough
+	if fileInfo.Size() < maxMemoryFileSize {
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			fmt.Printf("Error reading file %s: %v\n", filePath, err)
+			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filePath, err)
 			return
 		}
-
-		// Process the cached content
-		for _, line := range strings.Split(string(content), ",") {
-			line = strings.TrimSpace(line)
-			if isValidURL(line) {
-				urlChan <- line
+		var candidates []string
+		for _, line := range strings.Split(string(content), "\n") {
+			for _, part := range strings.Split(line, ",") {
+				candidates = append(candidates, strings.TrimSpace(part))
 			}
 		}
-		<-workerPool
+		checkURLs(candidates, urlChan, workerPool)
 	} else {
 		// Process the file line by line for large files
 		scanner := bufio.NewScanner(file)
-
 		for scanner.Scan() {
-			workerPool <- struct{}{}
-			line := scanner.Text()
-			for _, part := range strings.Split(line, ",") {
-				part = strings.TrimSpace(part)
-				if isValidURL(part) {
-					urlChan <- part
-				}
+			var candidates []string
+			for _, part := range strings.Split(scanner.Text(), ",") {
+				candidates = append(candidates, strings.TrimSpace(part))
 			}
-			<-workerPool
+			checkURLs(candidates, urlChan, workerPool)
 		}
-
 		if err := scanner.Err(); err != nil {
-			fmt.Printf("Error reading file %s: %v\n", filePath, err)
-			return
+			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", filePath, err)
 		}
 	}
 }
@@ -103,14 +111,14 @@ func extractURLs(filePath string, wg *sync.WaitGroup, urlChan chan<- string, wor
 func main() {
 	flag.Parse()
 
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go [--timeout DURATION | -t DURATION] <file1> <file2> ...")
+	if len(flag.Args()) == 0 {
+		fmt.Println("Usage: urlgrabber [--timeout DURATION | -t DURATION] <file1> <file2> ...")
 		flag.PrintDefaults()
 		return
 	}
 
 	urlChan := make(chan string)
-	workerPool := make(chan struct{}, 100) // Adjust the number of concurrent workers as needed
+	workerPool := make(chan struct{}, 100)
 	var wg sync.WaitGroup
 
 	for _, filePath := range flag.Args() {
@@ -128,7 +136,7 @@ func main() {
 		})
 
 		if err != nil {
-			fmt.Printf("Error walking path %s: %v\n", filePath, err)
+			fmt.Fprintf(os.Stderr, "Error walking path %s: %v\n", filePath, err)
 		}
 	}
 
